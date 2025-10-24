@@ -1,0 +1,52 @@
+services:
+  ols:
+    environment:
+      PHP_LSAPI_CHILDREN: ${PHP_LSAPI_CHILDREN:-20}
+      LSAPI_MAX_REQUESTS: ${LSAPI_MAX_REQUESTS:-2000}
+      LSAPI_MAX_PROCESS_TIME: ${LSAPI_MAX_PROCESS_TIME:-180}
+      LSAPI_PGRP_MAX_IDLE: ${LSAPI_PGRP_MAX_IDLE:-60}
+      LSAPI_AVOID_FORK: ${LSAPI_AVOID_FORK:-1}
+    build:
+      context: .
+      dockerfile: docker/openlitespeed/Dockerfile
+    image: ols-php83:baseline
+    ports:
+      - "8080:8088"   # OLS default HTTP listener in container
+      - "7080:7080"   # OLS admin UI
+    volumes:
+      - ./www:/var/www/html:delegated
+      - ols-conf:/usr/local/lsws/conf
+      - ols-shared-tmp:/tmp/lsws
+    depends_on:
+      - mariadb
+      - redis
+
+  redis:
+    build:
+      context: .
+      dockerfile: docker/redis/Dockerfile
+    image: custom-redis:latest
+    command: >
+      redis-server
+      --bind 0.0.0.0
+      --protected-mode no
+      --save ""
+      --appendonly no
+    ports:
+      - "6379:6379"
+
+  mariadb:
+    image: mariadb:11.4
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-example-root-password}
+      MARIADB_DATABASE: ${MARIADB_DATABASE:-benchmark}
+      MARIADB_USER: ${MARIADB_USER:-benchmark}
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD:-benchmark}
+    volumes:
+      - mariadb-data:/var/lib/mysql
+
+volumes:
+  mariadb-data:
+  ols-conf:
+  ols-shared-tmp:
