@@ -10,7 +10,16 @@ This Docker Compose workspace stands up a single OpenLiteSpeed 1.7 + PHP 8.3 (LS
 ### Quick start
 
 1. Review `.env` and adjust LSAPI knobs or database credentials for your benchmarks.
-2. Place your PHP application under `www/` (mounted into the container at `/var/www/html`).
+2. Populate `www/` (mounted into the container at `/var/www/html`):
+   - To bootstrap WordPress with the bundled settings, run:
+
+     ```sh
+     ./get-wordpress.sh
+     ```
+
+     The script downloads the latest WordPress release into `www/` and rewrites `wp-config.php` so that `DB_NAME`, `DB_USER`, and `DB_PASSWORD` all match the Compose defaults (`wordpress`), `DB_HOST` points at the MariaDB service (`db`), and `FS_METHOD` falls back to `direct` to avoid permissions prompts inside the container. Re-run it as needed—it skips the download when a prior WordPress tree already exists, so remove or rename `www/` first if you want a clean copy.
+
+   - If you are benchmarking another application, drop or mount your code into `www/` instead.
 3. Build and launch:
 
    ```sh
@@ -59,6 +68,14 @@ This Docker Compose workspace stands up a single OpenLiteSpeed 1.7 + PHP 8.3 (LS
 - Drop additional PHP configuration snippets into `/usr/local/lsws/lsphp83/etc/php.d/` via Dockerfile edits or bind mounts.
 - Need other PECL modules or system packages? Extend the `RUN` block in `docker/openlitespeed/Dockerfile` following the existing pattern.
 - Add benchmarks or fixtures under `www/`; the entrypoint seeds a simple `index.php` only when the directory is empty.
+
+### WordPress helper script
+
+- `./get-wordpress.sh` is a convenience script that preps a fresh WordPress tree tailored to this stack.
+  - It fetches the current upstream archive when `www/` does not yet contain `wp-config-sample.php`.
+  - It creates `wp-config.php` if needed and swaps the database name, user, password, and host to the Compose defaults (`wordpress` / `wordpress` / `wordpress` @ `db`).
+  - It appends `define('FS_METHOD','direct');` when missing so core updates and plugin/theme installs work without prompting for FTP credentials.
+- After the script finishes, bring the services up with `docker compose up` and complete the WordPress installer at `http://localhost:8080`.
 
 ### Useful commands
 
