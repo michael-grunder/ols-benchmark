@@ -65,6 +65,12 @@ RUN mkdir -p /var/www/html \
  && ln -sf /var/www/html /usr/local/lsws/Example/html \
  && printf "<?php echo 'ok';\n" > /var/www/html/index.php
 
+# Rewrite + vhost config
+COPY docker/openlitespeed/conf/wordpress_rewrite.conf \
+    /usr/local/lsws/conf/wordpress_rewrite.conf
+COPY docker/openlitespeed/conf/vhconf.conf \
+    /usr/local/lsws/conf/vhosts/Example/vhconf.conf
+
 # put our lsphp wrapper where OLS invokes it
 COPY docker/openlitespeed/lsphp-wrapper.sh \
      /usr/local/lsws/fcgi-bin/lsphp
