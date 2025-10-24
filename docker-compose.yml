@@ -11,14 +11,14 @@ services:
       dockerfile: docker/openlitespeed/Dockerfile
     image: ols-php83:baseline
     ports:
-      - "8080:8088"   # OLS default HTTP listener in container
-      - "7080:7080"   # OLS admin UI
+      - "8080:8088"  # site
+      - "7080:7080"  # admin UI
     volumes:
       - ./www:/var/www/html:delegated
-      - ols-conf:/usr/local/lsws/conf
+      #- ols-conf:/usr/local/lsws/conf
       - ols-shared-tmp:/tmp/lsws
     depends_on:
-      - mariadb
+      - db
       - redis
 
   redis:
@@ -27,22 +27,29 @@ services:
       dockerfile: docker/redis/Dockerfile
     image: custom-redis:latest
     command: >
-      redis-server
-      --bind 0.0.0.0
-      --protected-mode no
-      --save ""
-      --appendonly no
+      redis-server --bind 0.0.0.0 --protected-mode no
+                   --save "" --appendonly no
     ports:
       - "6379:6379"
 
-  mariadb:
+  db:
     image: mariadb:11.4
     restart: unless-stopped
     environment:
-      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-example-root-password}
-      MARIADB_DATABASE: ${MARIADB_DATABASE:-benchmark}
-      MARIADB_USER: ${MARIADB_USER:-benchmark}
-      MARIADB_PASSWORD: ${MARIADB_PASSWORD:-benchmark}
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-root}
+      MARIADB_DATABASE: ${MARIADB_DATABASE:-wordpress}
+      MARIADB_USER: ${MARIADB_USER:-wordpress}
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD:-wordpress}
+      MARIADB_INITDB_SKIP_TZINFO: 1
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_520_ci
+    healthcheck:
+      test: ["CMD-SHELL",
+             "mariadb -u$$MARIADB_USER -p$$MARIADB_PASSWORD -e 'SELECT 1'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
     volumes:
       - mariadb-data:/var/lib/mysql
 
