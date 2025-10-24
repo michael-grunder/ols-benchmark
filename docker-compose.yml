@@ -3,9 +3,11 @@ services:
     environment:
       PHP_LSAPI_CHILDREN: ${PHP_LSAPI_CHILDREN:-20}
       LSAPI_MAX_REQUESTS: ${LSAPI_MAX_REQUESTS:-2000}
-      LSAPI_MAX_PROCESS_TIME: ${LSAPI_MAX_PROCESS_TIME:-180}
       LSAPI_PGRP_MAX_IDLE: ${LSAPI_PGRP_MAX_IDLE:-60}
+      LSAPI_MAX_PROCESS_TIME: ${LSAPI_MAX_PROCESS_TIME:-1800}
       LSAPI_AVOID_FORK: ${LSAPI_AVOID_FORK:-1}
+      LSAPI_SLOW_REQ_TIME: ${LSAPI_SLOW_REQ_TIME:-10}
+      LSAPI_RESTART_ON_CRASH: ${LSAPI_RESTART_ON_CRASH:-1}
     build:
       context: .
       dockerfile: docker/openlitespeed/Dockerfile
@@ -15,7 +17,6 @@ services:
       - "7080:7080"  # admin UI
     volumes:
       - ./www:/var/www/html:delegated
-      #- ols-conf:/usr/local/lsws/conf
       - ols-shared-tmp:/tmp/lsws
     depends_on:
       - db
