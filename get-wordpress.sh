@@ -1,48 +1,58 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
-set -eao pipefail
+cd www || { echo "Directory www does not exist." >&2; exit 1; }
 
-cd www || { 
-    2>&1 echo "Directory www does not exist."; 
-    exit 1; 
+# Fetch WP if needed
+[ -f wp-config-sample.php ] || {
+  curl -fsSLO https://wordpress.org/latest.tar.gz
+  tar xzf latest.tar.gz --strip-components=1
 }
 
-curl -O https://wordpress.org/latest.tar.gz || {
-    2>&1 echo "Failed to download WordPress."; 
-    exit 1;
-}
+# Prepare wp-config.php
+[ -f wp-config.php ] || cp wp-config-sample.php wp-config.php
 
-tar xzf latest.tar.gz --strip-components=1 || {
-    2>&1 echo "Failed to extract WordPress."; 
-    exit 1;
-}
-
-mv wp-config-sample.php wp-config.php || {
-    2>&1 echo "Failed to rename wp-config-sample.php to wp-config.php."; 
-    exit 1;
-}
-
-VARS=('WP_HOME' 'WP_SITEURL' 'DB_NAME' 'DB_USER' 'DB_PASSWORD' 'DB_HOST')
-
+# BSD vs GNU sed in-place
 if [[ "$(uname)" == "Darwin" ]]; then
-    SED_COMMAND="sed -i ''"
+  SEDI=(sed -i '')
 else
-    SED_COMMAND="sed -i"
+  SEDI=(sed -i)
 fi
 
-for VAR in "${VARS[@]}"; do
+# Replace the DB_* lines (portable patterns)
+"${SEDI[@]}" -E \
+  "s@define\([[:space:]]*'DB_NAME'[[:space:]]*,[[:space:]]*'[^']*'\
+[[:space:]]*\);@define('DB_NAME','wordpress');@" wp-config.php
 
-    $SED_COMMAND "/define( '$VAR'/d" wp-config.php || {
-        2>&1 echo "Failed to remove existing definition of $VAR in wp-config.php."; 
-        exit 1;
-    }
-done
+"${SEDI[@]}" -E \
+  "s@define\([[:space:]]*'DB_USER'[[:space:]]*,[[:space:]]*'[^']*'\
+[[:space:]]*\);@define('DB_USER','wordpress');@" wp-config.php
 
-cat >> wp-config.php <<'PHP'
-  define('WP_HOME', 'http://localhost:8080');
-  define('WP_SITEURL', 'http://localhost:8080');
-  define('DB_NAME', 'wordpress');
-  define('DB_USER', 'wordpress');
-  define('DB_PASSWORD', 'wordpress');
-  define('DB_HOST', 'db');
-PHP
+"${SEDI[@]}" -E \
+  "s@define\([[:space:]]*'DB_PASSWORD'[[:space:]]*,[[:space:]]*'[^']*'\
+[[:space:]]*\);@define('DB_PASSWORD','wordpress');@" wp-config.php
+
+"${SEDI[@]}" -E \
+  "s@define\([[:space:]]*'DB_HOST'[[:space:]]*,[[:space:]]*'[^']*'\
+[[:space:]]*\);@define('DB_HOST','db');@" wp-config.php
+
+# Remove prior WP_HOME/SITEURL if present
+"${SEDI[@]}" -E "/define\([[:space:]]*'WP_HOME'[[:space:]]*,/d" wp-config.php
+"${SEDI[@]}" -E "/define\([[:space:]]*'WP_SITEURL'[[:space:]]*,/d" wp-config.php
+
+# Insert WP_HOME/SITEURL right above first DB_NAME define
+awk '
+  BEGIN { ins=0 }
+  ins==0 && /define\(..DB_NAME../ {
+    print "define('\''WP_HOME'\'','\''http://localhost:8080'\'');";
+    print "define('\''WP_SITEURL'\'','\''http://localhost:8080'\'');";
+    ins=1
+  }
+  { print }
+' wp-config.php > wp-config.php.new && mv wp-config.php.new wp-config.php
+
+# Optional: avoid FS perms prompts in containers
+grep -q "define('FS_METHOD'" wp-config.php || \
+  printf "%s\n" "define('FS_METHOD','direct');" >> wp-config.php
+
+echo "wp-config.php updated."
