@@ -4,7 +4,7 @@ services:
       PHP_LSAPI_CHILDREN: ${PHP_LSAPI_CHILDREN:-20}
       LSAPI_MAX_REQUESTS: ${LSAPI_MAX_REQUESTS:-2000}
       LSAPI_PGRP_MAX_IDLE: ${LSAPI_PGRP_MAX_IDLE:-60}
-      LSAPI_MAX_PROCESS_TIME: ${LSAPI_MAX_PROCESS_TIME:-1800}
+      LSAPI_MAX_PROCESS_TIME: ${LSAPI_MAX_PROCESS_TIME:-120}
       LSAPI_AVOID_FORK: ${LSAPI_AVOID_FORK:-1}
       LSAPI_SLOW_REQ_TIME: ${LSAPI_SLOW_REQ_TIME:-10}
       LSAPI_RESTART_ON_CRASH: ${LSAPI_RESTART_ON_CRASH:-1}
@@ -62,6 +62,7 @@ services:
       retries: 20
     volumes:
       - mariadb-data:/var/lib/mysql
+      - ./data/dump.sql.gz:/docker-entrypoint-initdb.d/dump.sql.gz:ro
 
 volumes:
   mariadb-data:
