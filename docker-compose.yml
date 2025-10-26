@@ -1,8 +1,10 @@
 services:
   ols:
     environment:
-      PHP_LSAPI_CHILDREN: ${PHP_LSAPI_CHILDREN:-20}
-      LSAPI_MAX_REQUESTS: ${LSAPI_MAX_REQUESTS:-2000}
+      OLS_ADMIN_USER: ${OLS_ADMIN_USER:-admin}
+      OLS_ADMIN_PASS: ${OLS_ADMIN_PASS:-admin1}
+      LSAPI_CHILDREN: ${LSAPI_CHILDREN:-20}
+      LSAPI_MAX_REQS: ${LSAPI_MAX_REQS:-2000}
       LSAPI_PGRP_MAX_IDLE: ${LSAPI_PGRP_MAX_IDLE:-60}
       LSAPI_MAX_PROCESS_TIME: ${LSAPI_MAX_PROCESS_TIME:-120}
       LSAPI_AVOID_FORK: ${LSAPI_AVOID_FORK:-1}
@@ -26,13 +28,9 @@ services:
     # OLS/PHP should use host "redis", port 6379
 
   redis:
-    build:
-      context: .
-      dockerfile: docker/redis/Dockerfile
-    image: custom-redis:latest
+    image: redis:8-alpine
     command: >
-      redis-server --bind 0.0.0.0 --save "" --protected-mode yes
-    # Not published to host; available to other services as "redis:6379"
+      redis-server --bind 0.0.0.0 --save "" --appendonly no --protected-mode no
     expose:
       - "6379"
     healthcheck:

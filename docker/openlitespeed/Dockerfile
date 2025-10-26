@@ -6,17 +6,30 @@ SHELL ["/bin/bash","-lc"]
 
 RUN set -eux \
  && dnf -y upgrade \
- && dnf -y install wget curl-minimal dnf-plugins-core \
+ && dnf -y install git wget curl-minimal dnf-plugins-core \
  && wget -O - https://repo.litespeed.sh | bash \
  && dnf -y install 'dnf-command(config-manager)' \
  && dnf config-manager --set-enabled crb \
  && dnf -y install \
       lsphp${PHP_MINOR} lsphp${PHP_MINOR}-devel lsphp${PHP_MINOR}-pear \
-      make gcc autoconf \
+      make gcc autoconf libzstd-devel lz4-devel \
  && ${LSPHP}/bin/pecl channel-update pecl.php.net \
  && printf "\n" | ${LSPHP}/bin/pecl install igbinary \
  && install -d /opt/stage/modules \
- && cp ${LSPHP}/lib64/php/modules/igbinary.so /opt/stage/modules/
+ && cp ${LSPHP}/lib64/php/modules/igbinary.so /opt/stage/modules/ \
+ && git clone --depth=1 https://github.com/phpredis/phpredis \
+              --branch 6.2.0 /tmp/phpredis \
+ && cd /tmp/phpredis \
+ && ${LSPHP}/bin/phpize \
+ && ./configure \
+       --with-php-config=${LSPHP}/bin/php-config \
+       --enable-redis-igbinary --with-liblz4 \
+       --enable-redis-lz4 \
+       --enable-redis-zstd \
+ && make -j"$(nproc)" \
+ && install -D -m0644 modules/redis.so /opt/stage/modules/redis.so \
+ && install -d /opt/stage/conf.d
+ #&& printf "extension=redis.so\n" \
 
 # ---- runtime image ---------------------------------------------------------
 
@@ -41,15 +54,24 @@ RUN set -euxo pipefail \
 # OLS + lsphp
 RUN set -euxo pipefail \
  && dnf -y install \
+      openssl \
       openlitespeed \
       lsphp${PHP_MINOR} \
       lsphp${PHP_MINOR}-{common,curl,gd,imap,intl,mbstring} \
       lsphp${PHP_MINOR}-{mysqlnd,opcache,pdo,process,soap,xml,zip,pgsql} \
-      lsphp${PHP_MINOR}-{apcu,relay,redis} \
-      libzstd libatomic procps-ng \
+      lsphp${PHP_MINOR}-{apcu,relay} \
+      libatomic procps-ng \
  && dnf clean all && rm -rf /var/cache/dnf \
  && sed -i 's/^; relay.maxmemory = 32M/relay.maxmemory = 1G/' \
-      /usr/local/lsws/lsphp${PHP_MINOR}/etc/php.d/60-relay.ini
+      /usr/local/lsws/lsphp${PHP_MINOR}/etc/php.d/60-relay.ini \
+ && mkdir -p /usr/local/lsws/admin/conf \
+ && user=admin pass=admin \
+ && mkdir -p /usr/local/lsws/admin/conf \
+ && echo "admin:$(openssl passwd -apr1 'admin1')" \
+    > /usr/local/lsws/admin/conf/htpasswd \
+ && chmod 640 /usr/local/lsws/admin/conf/htpasswd \
+ && chown lsadm:lsadm /usr/local/lsws/admin/conf/htpasswd || true
+
 
 # add igbinary module from builder
 COPY --from=igbuild /opt/stage/modules/ ${PHP_EXTDIR}/
