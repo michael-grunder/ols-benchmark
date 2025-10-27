@@ -44,25 +44,86 @@ $specStrings = [
 function usage(string $script): void
 {
     $message = <<<TXT
-Usage: php {$script} <input.ndjson> [output.csv]
+Usage: php {$script} <input.ndjson> [<input.ndjson> ...] [-o output.csv]
 
-Reads k6 NDJSON export (e.g. produced via --out json=...) and writes a two-column CSV
-containing the metrics defined in the script.
+Reads k6 NDJSON export files (e.g. produced via --out json=...) and writes a CSV
+containing the metrics defined in the script. Each additional input file adds a column
+to the output.
 TXT;
     fwrite(STDERR, $message . PHP_EOL);
     exit(1);
 }
 
-if ($argc < 2) {
-    usage($argv[0]);
+/**
+ * @param list<string> $argv
+ * @return array{inputs:list<string>,output:?string}
+ */
+function parseArguments(array $argv): array
+{
+    $args = $argv;
+    array_shift($args); // remove script name
+
+    if ($args === []) {
+        usage($argv[0] ?? 'extract-metrics');
+    }
+
+    $inputPaths = [];
+    $outputPath = null;
+
+    for ($i = 0; $i < count($args); $i++) {
+        $arg = $args[$i];
+        if ($arg === '-o' || $arg === '--output') {
+            $i++;
+            if (!isset($args[$i])) {
+                fwrite(STDERR, "Missing value for {$arg} option." . PHP_EOL);
+                exit(1);
+            }
+            $outputPath = $args[$i];
+            continue;
+        }
+        if (strncmp($arg, '--output=', 9) === 0) {
+            $outputPath = substr($arg, 9);
+            if ($outputPath === '') {
+                fwrite(STDERR, "Missing value for --output option." . PHP_EOL);
+                exit(1);
+            }
+            continue;
+        }
+        $inputPaths[] = $arg;
+    }
+
+    if ($inputPaths === []) {
+        usage($argv[0] ?? 'extract-metrics');
+    }
+
+    // Support legacy usage where the final argument is the output path.
+    if ($outputPath === null && count($inputPaths) >= 2) {
+        $lastArg = $inputPaths[count($inputPaths) - 1];
+        if (preg_match('/\\.csv$/i', $lastArg) === 1) {
+            $outputPath = array_pop($inputPaths);
+        }
+    }
+
+    if ($inputPaths === []) {
+        fwrite(STDERR, "At least one input file must be provided." . PHP_EOL);
+        exit(1);
+    }
+
+    return [
+        'inputs' => $inputPaths,
+        'output' => $outputPath,
+    ];
 }
 
-$inputPath = $argv[1];
-$outputPath = $argv[2] ?? null;
+$cli = parseArguments($argv);
+$inputPaths = $cli['inputs'];
+$outputPath = $cli['output'];
 
-if (!is_readable($inputPath)) {
-    fwrite(STDERR, "Input file '{$inputPath}' is not readable." . PHP_EOL);
-    exit(1);
+foreach ($inputPaths as $inputPath) {
+    if (!is_readable($inputPath)) {
+        fwrite(STDERR, "Input file '{$inputPath}' is not readable." . PHP_EOL);
+        exit(1);
+    }
 }
 
 /**
@@ -252,6 +313,129 @@ function formatNumber(?float $value): string
     return $formatted;
 }
 
+/**
+ * @param array<string,array{metric:string,filter:array<string,string>|null,stat:?string}> $specs
+ * @param array<string,array{datasets:array<string,array{filter:array<string,string>|null,store_values:bool}>,is_rate_metric:bool}> $requirements
+ * @param list<string> $specStrings
+ * @return array{label:string,values:array<string,string>}
+ */
+function processInputFile(string $inputPath, array $specStrings, array $specs, array $requirements): array
+{
+    $handle = fopen($inputPath, 'rb');
+    if ($handle === false) {
+        fwrite(STDERR, "Unable to open input file '{$inputPath}'." . PHP_EOL);
+        exit(1);
+    }
+
+    $collectors = [];
+    foreach ($requirements as $metricName => $info) {
+        $collectors[$metricName] = [
+            'datasets' => [],
+            'min_time' => null,
+            'max_time' => null,
+            'is_rate_metric' => $info['is_rate_metric'],
+        ];
+        foreach ($info['datasets'] as $key => $datasetInfo) {
+            $collectors[$metricName]['datasets'][$key] = initDataset($datasetInfo['store_values']);
+        }
+    }
+
+    $globalStart = null;
+    $globalEnd = null;
+
+    while (($line = fgets($handle)) !== false) {
+        $line = trim($line);
+        if ($line === '') {
+            continue;
+        }
+        $entry = json_decode($line, true);
+        if (!is_array($entry) || !isset($entry['metric'], $entry['type'], $entry['data'])) {
+            continue;
+        }
+        if ($entry['type'] !== 'Point') {
+            continue;
+        }
+
+        $metricName = $entry['metric'];
+        if (!isset($collectors[$metricName])) {
+            continue;
+        }
+
+        $data = $entry['data'];
+        if (!is_array($data) || !isset($data['value'])) {
+            continue;
+        }
+        $value = (float)$data['value'];
+
+        $time = parseTimeToFloat($data['time'] ?? null);
+        if ($time !== null) {
+            if ($globalStart === null || $time < $globalStart) {
+                $globalStart = $time;
+            }
+            if ($globalEnd === null || $time > $globalEnd) {
+                $globalEnd = $time;
+            }
+
+            if ($collectors[$metricName]['min_time'] === null || $time < $collectors[$metricName]['min_time']) {
+                $collectors[$metricName]['min_time'] = $time;
+            }
+            if ($collectors[$metricName]['max_time'] === null || $time > $collectors[$metricName]['max_time']) {
+                $collectors[$metricName]['max_time'] = $time;
+            }
+        }
+
+        $tags = $data['tags'] ?? [];
+        if (!is_array($tags)) {
+            $tags = [];
+        }
+
+        foreach ($requirements[$metricName]['datasets'] as $datasetKey => $datasetInfo) {
+            $filter = $datasetInfo['filter'];
+            if ($filter !== null && !matchesFilter($filter, $tags)) {
+                continue;
+            }
+            addValueToDataset($collectors[$metricName]['datasets'][$datasetKey], $value);
+        }
+    }
+    fclose($handle);
+
+    $globalDuration = ($globalStart !== null && $globalEnd !== null) ? ($globalEnd - $globalStart) : 0.0;
+
+    $values = [];
+    foreach ($specStrings as $specString) {
+        $spec = $specs[$specString];
+        $metric = $spec['metric'];
+        $filter = $spec['filter'];
+        $stat = $spec['stat'];
+        $datasetKey = datasetKey($filter);
+
+        $collector = $collectors[$metric] ?? null;
+        $dataset = $collector['datasets'][$datasetKey] ?? null;
+
+        $value = null;
+        if ($dataset !== null) {
+            $metricDuration = null;
+            if ($collector['min_time'] !== null && $collector['max_time'] !== null) {
+                $metricDuration = $collector['max_time'] - $collector['min_time'];
+            }
+            $value = computeStat(
+                $dataset,
+                $stat,
+                $globalDuration,
+                $metricDuration,
+                $collector['is_rate_metric'] ?? false
+            );
+        }
+
+        $values[$specString] = formatNumber($value);
+    }
+
+    return [
+        'label' => pathinfo($inputPath, PATHINFO_FILENAME),
+        'values' => $values,
+    ];
+}
+
 $specs = [];
 $requirements = [];
 
@@ -287,86 +471,6 @@ foreach ($specStrings as $specString) {
     }
 }
 
-$handle = fopen($inputPath, 'rb');
-if ($handle === false) {
-    fwrite(STDERR, "Unable to open input file '{$inputPath}'." . PHP_EOL);
-    exit(1);
-}
-
-$collectors = [];
-foreach ($requirements as $metricName => $info) {
-    $collectors[$metricName] = [
-        'datasets' => [],
-        'min_time' => null,
-        'max_time' => null,
-        'is_rate_metric' => $info['is_rate_metric'],
-    ];
-    foreach ($info['datasets'] as $key => $datasetInfo) {
-        $collectors[$metricName]['datasets'][$key] = initDataset($datasetInfo['store_values']);
-    }
-}
-
-$globalStart = null;
-$globalEnd = null;
-
-while (($line = fgets($handle)) !== false) {
-    $line = trim($line);
-    if ($line === '') {
-        continue;
-    }
-    $entry = json_decode($line, true);
-    if (!is_array($entry) || !isset($entry['metric'], $entry['type'], $entry['data'])) {
-        continue;
-    }
-    if ($entry['type'] !== 'Point') {
-        continue;
-    }
-
-    $metricName = $entry['metric'];
-    if (!isset($collectors[$metricName])) {
-        continue;
-    }
-
-    $data = $entry['data'];
-    if (!is_array($data) || !isset($data['value'])) {
-        continue;
-    }
-    $value = (float)$data['value'];
-
-    $time = parseTimeToFloat($data['time'] ?? null);
-    if ($time !== null) {
-        if ($globalStart === null || $time < $globalStart) {
-            $globalStart = $time;
-        }
-        if ($globalEnd === null || $time > $globalEnd) {
-            $globalEnd = $time;
-        }
-
-        if ($collectors[$metricName]['min_time'] === null || $time < $collectors[$metricName]['min_time']) {
-            $collectors[$metricName]['min_time'] = $time;
-        }
-        if ($collectors[$metricName]['max_time'] === null || $time > $collectors[$metricName]['max_time']) {
-            $collectors[$metricName]['max_time'] = $time;
-        }
-    }
-
-    $tags = $data['tags'] ?? [];
-    if (!is_array($tags)) {
-        $tags = [];
-    }
-
-    foreach ($requirements[$metricName]['datasets'] as $datasetKey => $datasetInfo) {
-        $filter = $datasetInfo['filter'];
-        if ($filter !== null && !matchesFilter($filter, $tags)) {
-            continue;
-        }
-        addValueToDataset($collectors[$metricName]['datasets'][$datasetKey], $value);
-    }
-}
-fclose($handle);
-
-$globalDuration = ($globalStart !== null && $globalEnd !== null) ? ($globalEnd - $globalStart) : 0.0;
-
 $outputHandle = $outputPath !== null
     ? fopen($outputPath, 'wb')
     : fopen('php://stdout', 'wb');
@@ -376,38 +480,23 @@ if ($outputHandle === false) {
     exit(1);
 }
 
-// Get the basename minus extension
-$inputBaseName = pathinfo($inputPath, PATHINFO_FILENAME);
+$columns = [];
+foreach ($inputPaths as $inputPath) {
+    $columns[] = processInputFile($inputPath, $specStrings, $specs, $requirements);
+}
 
-$header = ['metric', $inputBaseName];
+$header = ['metric'];
+foreach ($columns as $column) {
+    $header[] = $column['label'];
+}
 fputcsv($outputHandle, $header, ',', '"', '\\');
 
 foreach ($specStrings as $specString) {
-    $spec = $specs[$specString];
-    $metric = $spec['metric'];
-    $filter = $spec['filter'];
-    $stat = $spec['stat'];
-    $datasetKey = datasetKey($filter);
-
-    $collector = $collectors[$metric] ?? null;
-    $dataset = $collector['datasets'][$datasetKey] ?? null;
-
-    $value = null;
-    if ($dataset !== null) {
-        $metricDuration = null;
-        if ($collector['min_time'] !== null && $collector['max_time'] !== null) {
-            $metricDuration = $collector['max_time'] - $collector['min_time'];
-        }
-        $value = computeStat(
-            $dataset,
-            $stat,
-            $globalDuration,
-            $metricDuration,
-            $collector['is_rate_metric'] ?? false
-        );
+    $row = [$specString];
+    foreach ($columns as $column) {
+        $row[] = $column['values'][$specString] ?? '';
     }
-
-    fputcsv($outputHandle, [$specString, formatNumber($value)], ',', '"', '\\');
+    fputcsv($outputHandle, $row, ',', '"', '\\');
 }
 
 if ($outputPath !== null) {
