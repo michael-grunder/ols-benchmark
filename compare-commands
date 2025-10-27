@@ -1,0 +1,162 @@
+#!/usr/bin/env php
+<?php
+declare(strict_types=1);
+
+/**
+ * Compare two JSON files containing Redis command counts and display the
+ * aggregate differences in a tabular format.
+ */
+
+if ($argc !== 3) {
+    fwrite(STDERR, "Usage: compare-commands <file-a> <file-b>\n");
+    exit(1);
+}
+
+[$script, $fileA, $fileB] = $argv;
+verifyReadable($fileA);
+verifyReadable($fileB);
+
+$dataA = loadCommandCounts($fileA);
+$dataB = loadCommandCounts($fileB);
+
+$commands = array_unique(array_merge(array_keys($dataA), array_keys($dataB)));
+sort($commands, SORT_STRING);
+
+$headerCommand = 'COMMAND';
+$headerA = basename($fileA);
+$headerB = basename($fileB);
+$headerDelta = 'DELTA';
+
+$widthCommand = max(strlen($headerCommand), maxStringLength($commands));
+$widthA = max(strlen($headerA), maxValueWidth($commands, $dataA));
+$widthB = max(strlen($headerB), maxValueWidth($commands, $dataB));
+$widthDelta = max(strlen($headerDelta), maxDeltaWidth($commands, $dataA, $dataB));
+
+printf(
+    "%-{$widthCommand}s  %{$widthA}s  %{$widthB}s  %{$widthDelta}s\n",
+    $headerCommand,
+    $headerA,
+    $headerB,
+    $headerDelta
+);
+
+echo str_repeat('-', $widthCommand) . '  '
+    . str_repeat('-', $widthA) . '  '
+    . str_repeat('-', $widthB) . '  '
+    . str_repeat('-', $widthDelta) . "\n";
+
+foreach ($commands as $command) {
+    $countA = $dataA[$command] ?? 0;
+    $countB = $dataB[$command] ?? 0;
+    $delta = $countB - $countA;
+
+    printf(
+        "%-{$widthCommand}s  %{$widthA}d  %{$widthB}d  %{$widthDelta}d\n",
+        $command,
+        $countA,
+        $countB,
+        $delta
+    );
+}
+
+/**
+ * @param string $path
+ *
+ * @return array<string,int>
+ */
+function loadCommandCounts(string $path): array
+{
+    $contents = file_get_contents($path);
+    if ($contents === false) {
+        throw new RuntimeException("Failed to read file: {$path}");
+    }
+
+    $data = decodeJsonObject($contents, $path);
+
+    $normalized = [];
+    foreach ($data as $command => $count) {
+        if (!is_string($command)) {
+            throw new RuntimeException("Invalid command name in {$path}");
+        }
+        if (!is_numeric($count)) {
+            throw new RuntimeException("Non-numeric count for {$command} in {$path}");
+        }
+        $normalized[$command] = (int) $count;
+    }
+
+    return $normalized;
+}
+
+/**
+ * @param array<int|string, mixed> $commands
+ */
+function maxStringLength(array $commands): int
+{
+    $max = 0;
+    foreach ($commands as $command) {
+        $max = max($max, strlen((string) $command));
+    }
+
+    return $max;
+}
+
+/**
+ * @param array<string,int> $commandCounts
+ */
+function maxValueWidth(array $commands, array $commandCounts): int
+{
+    $max = 1;
+    foreach ($commands as $command) {
+        $count = $commandCounts[$command] ?? 0;
+        $max = max($max, strlen((string) $count));
+    }
+
+    return $max;
+}
+
+/**
+ * @param array<string,int> $dataA
+ * @param array<string,int> $dataB
+ */
+function maxDeltaWidth(array $commands, array $dataA, array $dataB): int
+{
+    $max = 1;
+    foreach ($commands as $command) {
+        $delta = ($dataB[$command] ?? 0) - ($dataA[$command] ?? 0);
+        $max = max($max, strlen((string) $delta));
+    }
+
+    return $max;
+}
+
+function verifyReadable(string $path): void
+{
+    if (!is_readable($path)) {
+        throw new RuntimeException("File is not readable: {$path}");
+    }
+}
+
+/**
+ * Attempt to decode a JSON object from arbitrary input content.
+ *
+ * @return array<int|string,mixed>
+ */
+function decodeJsonObject(string $raw, string $path): array
+{
+    $trimmed = trim($raw);
+    $decoded = json_decode($trimmed, true);
+    if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+        return $decoded;
+    }
+
+    if (preg_match_all('/\{(?:[^{}]|(?R))*\}/s', $raw, $matches)) {
+        foreach ($matches[0] as $candidate) {
+            $decoded = json_decode($candidate, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                return $decoded;
+            }
+        }
+    }
+
+    throw new RuntimeException("Failed to parse JSON object from {$path}");
+}
