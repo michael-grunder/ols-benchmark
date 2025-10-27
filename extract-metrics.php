@@ -376,6 +376,12 @@ if ($outputHandle === false) {
     exit(1);
 }
 
+// Get the basename minus extension
+$inputBaseName = pathinfo($inputPath, PATHINFO_FILENAME);
+
+$header = ['metric', $inputBaseName];
+fputcsv($outputHandle, $header, ',', '"', '\\');
+
 foreach ($specStrings as $specString) {
     $spec = $specs[$specString];
     $metric = $spec['metric'];
