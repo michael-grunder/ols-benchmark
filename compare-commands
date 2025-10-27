@@ -22,6 +22,14 @@ $dataB = loadCommandCounts($fileB);
 $commands = array_unique(array_merge(array_keys($dataA), array_keys($dataB)));
 sort($commands, SORT_STRING);
 
+$totalA = 0;
+$totalB = 0;
+foreach ($commands as $command) {
+    $totalA += $dataA[$command] ?? 0;
+    $totalB += $dataB[$command] ?? 0;
+}
+$totalDelta = $totalB - $totalA;
+
 $headerCommand = 'COMMAND';
 $headerA = basename($fileA);
 $headerB = basename($fileB);
@@ -31,6 +39,10 @@ $widthCommand = max(strlen($headerCommand), maxStringLength($commands));
 $widthA = max(strlen($headerA), maxValueWidth($commands, $dataA));
 $widthB = max(strlen($headerB), maxValueWidth($commands, $dataB));
 $widthDelta = max(strlen($headerDelta), maxDeltaWidth($commands, $dataA, $dataB));
+
+$widthA = max($widthA, strlen((string) $totalA));
+$widthB = max($widthB, strlen((string) $totalB));
+$widthDelta = max($widthDelta, strlen((string) $totalDelta));
 
 printf(
     "%-{$widthCommand}s  %{$widthA}s  %{$widthB}s  %{$widthDelta}s\n",
@@ -58,6 +70,19 @@ foreach ($commands as $command) {
         $delta
     );
 }
+
+echo str_repeat('-', $widthCommand) . '  '
+    . str_repeat('-', $widthA) . '  '
+    . str_repeat('-', $widthB) . '  '
+    . str_repeat('-', $widthDelta) . "\n";
+
+printf(
+    "%-{$widthCommand}s  %{$widthA}d  %{$widthB}d  %{$widthDelta}d\n",
+    'TOTAL',
+    $totalA,
+    $totalB,
+    $totalDelta
+);
 
 /**
  * @param string $path
