@@ -20,6 +20,9 @@ services:
     volumes:
       - ./www:/var/www/html:delegated
       - ols-shared-tmp:/tmp/lsws
+      - ols-conf:/usr/local/lsws/conf
+      - ols-admin:/usr/local/lsws/admin
+
     depends_on:
       redis:
         condition: service_healthy
@@ -66,3 +69,5 @@ volumes:
   mariadb-data:
   ols-conf:
   ols-shared-tmp:
+  ols-admin:
+  ols-logs:
